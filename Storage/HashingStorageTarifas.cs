@@ -5,24 +5,25 @@ using System.Text;
 
 namespace EstructurasDeDatosIntegrador.Storage
 {
-    internal class HashingStorage
+    // Hashing extensible para tarifas. Misma estructura de 3 archivos binarios
+    // que HashingStorage; los datos se almacenan en el directorio de trabajo
+    // actual — el llamador debe apuntar a TarifsData/ antes de usar esta clase.
+    internal class HashingStorageTarifas
     {
-        private const string DIRECTORY_FILE = "directory.dat";
-        private const string BUCKETS_FILE   = "buckets.dat";
-        private const string DATA_FILE      = "vehiculos.dat";
+        private const string DIRECTORY_FILE  = "directory.dat";
+        private const string BUCKETS_FILE    = "buckets.dat";
+        private const string DATA_FILE       = "tarifas.dat";
 
-        // Capacidad máxima de registros por bucket
+        // Capacidad máxima de registros por bucket (idéntica a HashingStorage).
         private const int BUCKET_CAPACITY = 2;
 
-        // Bytes fijos reservados para la placa en cada entrada del bucket (≤ 8 chars UTF-8)
-        private const int PLACA_KEY_SIZE = 8;
-
-        // Formato de cada bucket: localDepth(int,4) + count(int,4) + BUCKET_CAPACITY × (placa(byte[8]) + dataOffset(long,8))
-        // Tamaño total de un bucket: 8 + BUCKET_CAPACITY × 16 = 40 bytes  ← idéntico a la versión anterior
-
-        // Formato del directorio: globalDepth(int,4) + 2^globalDepth × puntero(long,8)
+        // Bytes fijos reservados para el código en cada entrada del bucket (≤ 8 chars UTF-8).
+        // Bucket: localDepth(4) + count(4) + BUCKET_CAPACITY × (codigo(8) + dataOffset(8)) = 40 bytes.
+        private const int CODIGO_KEY_SIZE = 8;
 
         private int globalDepth = 1;
+
+        // ── Inicialización ─────────────────────────────────────────────────────
 
         private void ResetFiles()
         {
@@ -41,14 +42,15 @@ namespace EstructurasDeDatosIntegrador.Storage
             using var dataStream      = new FileStream(DATA_FILE,      FileMode.Create, FileAccess.ReadWrite);
 
             WriteInt(directoryStream, globalDepth);
+            WriteLong(directoryStream, CreateEmptyBucket(bucketsStream, 1)); // índice 0
+            WriteLong(directoryStream, CreateEmptyBucket(bucketsStream, 1)); // índice 1
+            WriteInt(dataStream, 0);
+        }
 
-            long bucket1Offset = CreateEmptyBucket(bucketsStream, 1);
-            long bucket2Offset = CreateEmptyBucket(bucketsStream, 1);
-
-            WriteLong(directoryStream, bucket1Offset); // índice 0 → bucket 0
-            WriteLong(directoryStream, bucket2Offset); // índice 1 → bucket 1
-
-            WriteInt(dataStream, 0); // contador de registros = 0
+        public void EnsureInitialized()
+        {
+            if (!File.Exists(DIRECTORY_FILE) || !File.Exists(BUCKETS_FILE) || !File.Exists(DATA_FILE))
+                InitializeFiles();
         }
 
         private long CreateEmptyBucket(FileStream bucketsStream, int localDepth)
@@ -59,24 +61,24 @@ namespace EstructurasDeDatosIntegrador.Storage
             WriteInt(bucketsStream, 0);
             for (int i = 0; i < BUCKET_CAPACITY; i++)
             {
-                WritePlacaKey(bucketsStream, string.Empty); // placa placeholder (8 ceros)
-                WriteLong(bucketsStream, -1L);              // dataOffset placeholder
+                WriteCodigoKey(bucketsStream, string.Empty);
+                WriteLong(bucketsStream, -1L);
             }
             return offset;
         }
 
         // ── Hash y directorio ──────────────────────────────────────────────────
 
-        private int Hash(string placa)
+        private int Hash(string codigo)
         {
             int sum = 0;
-            foreach (char c in placa) sum += c;
+            foreach (char c in codigo) sum += c;
             return Math.Abs(sum % 97);
         }
 
-        private int GetDirectoryIndex(string placa)
+        private int GetDirectoryIndex(string codigo)
         {
-            return Hash(placa) & ((1 << globalDepth) - 1);
+            return Hash(codigo) & ((1 << globalDepth) - 1);
         }
 
         private static void DoubleDirectory(FileStream directory, int oldGlobalDepth)
@@ -94,26 +96,19 @@ namespace EstructurasDeDatosIntegrador.Storage
             for (int i = 0; i < oldSize; i++) WriteLong(directory, oldPointers[i]);
         }
 
-        // Abre los archivos existentes o los crea desde cero si no existen.
-        public void EnsureInitialized()
-        {
-            if (!File.Exists(DIRECTORY_FILE) || !File.Exists(BUCKETS_FILE) || !File.Exists(DATA_FILE))
-                InitializeFiles();
-        }
-
         // ── API pública ────────────────────────────────────────────────────────
 
-        public bool AddVehiculo(Vehiculo vehiculo)
+        public bool AddTarifa(Tarifa tarifa)
         {
-            if (GetVehiculo(vehiculo.Placa) != null)
+            if (GetTarifa(tarifa.Codigo) != null)
                 return false;
 
-            long dataOffset = AddVehiculoData(vehiculo);
-            InsertEntry(vehiculo.Placa, dataOffset);
+            long dataOffset = AddTarifaData(tarifa);
+            InsertEntry(tarifa.Codigo, dataOffset);
             return true;
         }
 
-        public bool DeleteVehiculo(string placa)
+        public bool DeleteTarifa(string codigo)
         {
             try
             {
@@ -122,13 +117,13 @@ namespace EstructurasDeDatosIntegrador.Storage
                 using var dataStream      = new FileStream(DATA_FILE,      FileMode.Open, FileAccess.ReadWrite);
 
                 globalDepth = ReadInt(directoryStream);
-                int dirIndex = GetDirectoryIndex(placa);
+                int dirIndex = GetDirectoryIndex(codigo);
 
                 directoryStream.Seek(4 + dirIndex * 8L, SeekOrigin.Begin);
                 long bucketOffset = ReadLong(directoryStream);
 
                 bucketsStream.Seek(bucketOffset, SeekOrigin.Begin);
-                ReadInt(bucketsStream); // localDepth — no se usa aquí
+                ReadInt(bucketsStream); // localDepth
                 int count = ReadInt(bucketsStream);
 
                 long entryBase  = bucketOffset + 8;
@@ -136,31 +131,28 @@ namespace EstructurasDeDatosIntegrador.Storage
                 for (int i = 0; i < count; i++)
                 {
                     bucketsStream.Seek(entryBase + i * 16, SeekOrigin.Begin);
-                    string stored = ReadPlacaKey(bucketsStream);
+                    string stored = ReadCodigoKey(bucketsStream);
                     ReadLong(bucketsStream);
-                    if (stored == placa) { foundIndex = i; break; }
+                    if (stored == codigo) { foundIndex = i; break; }
                 }
                 if (foundIndex < 0) return false;
 
-                // Desplazar entradas posteriores una posición hacia atrás.
                 for (int i = foundIndex; i < count - 1; i++)
                 {
                     bucketsStream.Seek(entryBase + (i + 1) * 16, SeekOrigin.Begin);
-                    string nextPlaca  = ReadPlacaKey(bucketsStream);
+                    string nextCodigo = ReadCodigoKey(bucketsStream);
                     long   nextOffset = ReadLong(bucketsStream);
                     bucketsStream.Seek(entryBase + i * 16, SeekOrigin.Begin);
-                    WritePlacaKey(bucketsStream, nextPlaca);
+                    WriteCodigoKey(bucketsStream, nextCodigo);
                     WriteLong(bucketsStream, nextOffset);
                 }
 
-                // Limpiar el último slot y decrementar el contador del bucket.
                 bucketsStream.Seek(entryBase + (count - 1) * 16, SeekOrigin.Begin);
-                WritePlacaKey(bucketsStream, string.Empty);
+                WriteCodigoKey(bucketsStream, string.Empty);
                 WriteLong(bucketsStream, -1L);
                 bucketsStream.Seek(bucketOffset + 4, SeekOrigin.Begin);
                 WriteInt(bucketsStream, count - 1);
 
-                // Decrementar el contador global en vehiculos.dat.
                 dataStream.Seek(0, SeekOrigin.Begin);
                 int total = ReadInt(dataStream);
                 dataStream.Seek(0, SeekOrigin.Begin);
@@ -172,11 +164,8 @@ namespace EstructurasDeDatosIntegrador.Storage
             return false;
         }
 
-        // Devuelve solo los vehículos actualmente en el parqueadero
-        // recorriendo los buckets (ignora registros eliminados del hash).
-        public List<Vehiculo> GetVehiculosPresentes()
+        public Tarifa GetTarifa(string codigo)
         {
-            var lista = new List<Vehiculo>();
             try
             {
                 using var directoryStream = new FileStream(DIRECTORY_FILE, FileMode.Open, FileAccess.Read);
@@ -184,8 +173,59 @@ namespace EstructurasDeDatosIntegrador.Storage
                 using var dataStream      = new FileStream(DATA_FILE,      FileMode.Open, FileAccess.Read);
 
                 globalDepth = ReadInt(directoryStream);
-                int dirSize = 1 << globalDepth;
-                var visitados = new System.Collections.Generic.HashSet<long>();
+                int dirIndex = GetDirectoryIndex(codigo);
+
+                directoryStream.Seek(4 + dirIndex * 8L, SeekOrigin.Begin);
+                long bucketOffset = ReadLong(directoryStream);
+
+                bucketsStream.Seek(bucketOffset, SeekOrigin.Begin);
+                ReadInt(bucketsStream); // localDepth
+                int count = ReadInt(bucketsStream);
+
+                for (int i = 0; i < count; i++)
+                {
+                    string storedCodigo = ReadCodigoKey(bucketsStream);
+                    long   dataOffset   = ReadLong(bucketsStream);
+                    if (storedCodigo == codigo)
+                    {
+                        dataStream.Seek(dataOffset, SeekOrigin.Begin);
+                        return ReadTarifaRecord(dataStream);
+                    }
+                }
+            }
+            catch (IOException e) { Console.WriteLine(e.Message); }
+            return null;
+        }
+
+        public Tarifa GetTarifaSeq(string codigo)
+        {
+            try
+            {
+                using var dataStream = new FileStream(DATA_FILE, FileMode.Open, FileAccess.Read);
+                dataStream.Seek(4, SeekOrigin.Begin);
+                while (dataStream.Position < dataStream.Length)
+                {
+                    var t = ReadTarifaRecord(dataStream);
+                    if (t.Codigo == codigo) return t;
+                }
+            }
+            catch (IOException e) { Console.WriteLine(e.Message); }
+            return null;
+        }
+
+        // Recorre los buckets para devolver solo las tarifas actualmente registradas.
+        public List<Tarifa> GetTarifasRegistradas()
+        {
+            var lista = new List<Tarifa>();
+            try
+            {
+                using var directoryStream = new FileStream(DIRECTORY_FILE, FileMode.Open, FileAccess.Read);
+                using var bucketsStream   = new FileStream(BUCKETS_FILE,   FileMode.Open, FileAccess.Read);
+                using var dataStream      = new FileStream(DATA_FILE,      FileMode.Open, FileAccess.Read);
+
+                globalDepth = ReadInt(directoryStream);
+                int dirSize   = 1 << globalDepth;
+                var visitados = new HashSet<long>();
 
                 for (int i = 0; i < dirSize; i++)
                 {
@@ -199,11 +239,11 @@ namespace EstructurasDeDatosIntegrador.Storage
 
                     for (int j = 0; j < count; j++)
                     {
-                        string placa      = ReadPlacaKey(bucketsStream);
+                        string codigo     = ReadCodigoKey(bucketsStream);
                         long   dataOffset = ReadLong(bucketsStream);
-                        if (string.IsNullOrEmpty(placa) || dataOffset < 0) continue;
+                        if (string.IsNullOrEmpty(codigo) || dataOffset < 0) continue;
                         dataStream.Seek(dataOffset, SeekOrigin.Begin);
-                        lista.Add(ReadVehiculoRecord(dataStream));
+                        lista.Add(ReadTarifaRecord(dataStream));
                     }
                 }
             }
@@ -211,26 +251,21 @@ namespace EstructurasDeDatosIntegrador.Storage
             return lista;
         }
 
-        public List<Vehiculo> GetAllVehiculos()
+        public List<Tarifa> GetAllTarifas()
         {
-            var lista = new List<Vehiculo>();
+            var lista = new List<Tarifa>();
             try
             {
                 using var dataStream = new FileStream(DATA_FILE, FileMode.Open, FileAccess.Read);
                 dataStream.Seek(4, SeekOrigin.Begin);
                 while (dataStream.Position < dataStream.Length)
-                    lista.Add(ReadVehiculoRecord(dataStream));
+                    lista.Add(ReadTarifaRecord(dataStream));
             }
             catch (IOException e) { Console.WriteLine(e.Message); }
-
-            Console.WriteLine("\n=== Todos los vehículos ===");
-            foreach (var v in lista)
-                Console.WriteLine($"  Placa: {v.Placa}, Tipo: {v.Tipo}, Comentarios: {v.Comentarios}");
-            Console.WriteLine($"Total: {lista.Count} vehículos");
             return lista;
         }
 
-        public string GetVehiculoCount()
+        public string GetTarifaCount()
         {
             try
             {
@@ -242,62 +277,9 @@ namespace EstructurasDeDatosIntegrador.Storage
             return "0";
         }
 
-        // Búsqueda secuencial: recorre vehiculos.dat comparando placa registro a registro.
-        public Vehiculo GetVehiculoSeq(string placa)
-        {
-            try
-            {
-                using var dataStream = new FileStream(DATA_FILE, FileMode.Open, FileAccess.Read);
-                dataStream.Seek(4, SeekOrigin.Begin);
-                while (dataStream.Position < dataStream.Length)
-                {
-                    var v = ReadVehiculoRecord(dataStream);
-                    if (v.Placa == placa) return v;
-                }
-            }
-            catch (IOException e) { Console.WriteLine(e.Message); }
-            Console.WriteLine($"Vehículo con placa {placa} no encontrado.");
-            return null;
-        }
-
-        // Búsqueda por hashing: calcula el índice del directorio, accede al bucket
-        // y localiza la placa; luego lee el registro completo desde vehiculos.dat.
-        public Vehiculo GetVehiculo(string placa)
-        {
-            try
-            {
-                using var directoryStream = new FileStream(DIRECTORY_FILE, FileMode.Open, FileAccess.Read);
-                using var bucketsStream   = new FileStream(BUCKETS_FILE,   FileMode.Open, FileAccess.Read);
-                using var dataStream      = new FileStream(DATA_FILE,      FileMode.Open, FileAccess.Read);
-
-                globalDepth = ReadInt(directoryStream);
-                int dirIndex = GetDirectoryIndex(placa);
-
-                directoryStream.Seek(4 + dirIndex * 8L, SeekOrigin.Begin);
-                long bucketOffset = ReadLong(directoryStream);
-
-                bucketsStream.Seek(bucketOffset, SeekOrigin.Begin);
-                int localDepth = ReadInt(bucketsStream); // avanza el puntero, no se usa aquí
-                int count      = ReadInt(bucketsStream);
-
-                for (int i = 0; i < count; i++)
-                {
-                    string storedPlaca = ReadPlacaKey(bucketsStream);
-                    long   dataOffset  = ReadLong(bucketsStream);
-                    if (storedPlaca == placa)
-                    {
-                        dataStream.Seek(dataOffset, SeekOrigin.Begin);
-                        return ReadVehiculoRecord(dataStream);
-                    }
-                }
-            }
-            catch (IOException e) { Console.WriteLine(e.Message); }
-            return null;
-        }
-
         // ── Operaciones internas ───────────────────────────────────────────────
 
-        private long AddVehiculoData(Vehiculo vehiculo)
+        private long AddTarifaData(Tarifa tarifa)
         {
             using var dataStream = new FileStream(DATA_FILE, FileMode.Open, FileAccess.ReadWrite);
             dataStream.Seek(0, SeekOrigin.Begin);
@@ -307,11 +289,11 @@ namespace EstructurasDeDatosIntegrador.Storage
 
             long dataOffset = dataStream.Length;
             dataStream.Seek(0, SeekOrigin.End);
-            WriteVehiculoRecord(dataStream, vehiculo);
+            WriteTarifaRecord(dataStream, tarifa);
             return dataOffset;
         }
 
-        private void InsertEntry(string placa, long dataOffset)
+        private void InsertEntry(string codigo, long dataOffset)
         {
             using var directoryStream = new FileStream(DIRECTORY_FILE, FileMode.Open, FileAccess.ReadWrite);
             using var bucketsStream   = new FileStream(BUCKETS_FILE,   FileMode.Open, FileAccess.ReadWrite);
@@ -321,7 +303,7 @@ namespace EstructurasDeDatosIntegrador.Storage
 
             while (true)
             {
-                int  dirIndex    = GetDirectoryIndex(placa);
+                int  dirIndex     = GetDirectoryIndex(codigo);
                 directoryStream.Seek(4 + dirIndex * 8L, SeekOrigin.Begin);
                 long bucketOffset = ReadLong(directoryStream);
 
@@ -329,29 +311,25 @@ namespace EstructurasDeDatosIntegrador.Storage
                 int localDepth = ReadInt(bucketsStream);
                 int count      = ReadInt(bucketsStream);
 
-                // CASO 1: hay espacio en el bucket → insertar directamente.
-                // Cada entrada ocupa 16 bytes: 8 (placa fija) + 8 (dataOffset).
                 if (count < BUCKET_CAPACITY)
                 {
                     bucketsStream.Seek(bucketOffset + 8 + (long)count * 16, SeekOrigin.Begin);
-                    WritePlacaKey(bucketsStream, placa);
+                    WriteCodigoKey(bucketsStream, codigo);
                     WriteLong(bucketsStream, dataOffset);
                     bucketsStream.Seek(bucketOffset + 4, SeekOrigin.Begin);
                     WriteInt(bucketsStream, count + 1);
                     return;
                 }
 
-                // Leer entradas existentes del bucket lleno.
-                var existingPlacas   = new string[count];
+                var existingCodigos  = new string[count];
                 var existingOffsets  = new long[count];
                 bucketsStream.Seek(bucketOffset + 8, SeekOrigin.Begin);
                 for (int i = 0; i < count; i++)
                 {
-                    existingPlacas[i]  = ReadPlacaKey(bucketsStream);
-                    existingOffsets[i] = ReadLong(bucketsStream);
+                    existingCodigos[i]  = ReadCodigoKey(bucketsStream);
+                    existingOffsets[i]  = ReadLong(bucketsStream);
                 }
 
-                // CASO 2: localDepth == globalDepth → duplicar directorio antes del split.
                 if (localDepth == globalDepth)
                 {
                     DoubleDirectory(directoryStream, globalDepth);
@@ -361,20 +339,18 @@ namespace EstructurasDeDatosIntegrador.Storage
                 int  newLocalDepth   = localDepth + 1;
                 long newBucketOffset = CreateEmptyBucket(bucketsStream, newLocalDepth);
 
-                // Limpiar bucket original.
                 bucketsStream.Seek(bucketOffset, SeekOrigin.Begin);
                 WriteInt(bucketsStream, newLocalDepth);
                 WriteInt(bucketsStream, 0);
                 for (int i = 0; i < BUCKET_CAPACITY; i++)
                 {
-                    WritePlacaKey(bucketsStream, string.Empty);
+                    WriteCodigoKey(bucketsStream, string.Empty);
                     WriteLong(bucketsStream, -1L);
                 }
 
-                // Reasignar punteros del directorio.
-                int dirSize  = 1 << globalDepth;
-                int oldMask  = (1 << localDepth) - 1;
-                int pattern  = dirIndex & oldMask;
+                int dirSize = 1 << globalDepth;
+                int oldMask = (1 << localDepth) - 1;
+                int pattern = dirIndex & oldMask;
 
                 for (int i = 0; i < dirSize; i++)
                 {
@@ -386,68 +362,70 @@ namespace EstructurasDeDatosIntegrador.Storage
                     }
                 }
 
-                // Redistribuir entradas entre bucket viejo y nuevo.
-                for (int i = 0; i < existingPlacas.Length; i++)
+                for (int i = 0; i < existingCodigos.Length; i++)
                 {
-                    int  idx          = GetDirectoryIndex(existingPlacas[i]);
+                    int  idx          = GetDirectoryIndex(existingCodigos[i]);
                     directoryStream.Seek(4 + idx * 8L, SeekOrigin.Begin);
                     long targetBucket = ReadLong(directoryStream);
 
                     bucketsStream.Seek(targetBucket + 4, SeekOrigin.Begin);
                     int targetCount = ReadInt(bucketsStream);
                     bucketsStream.Seek(targetBucket + 8 + (long)targetCount * 16, SeekOrigin.Begin);
-                    WritePlacaKey(bucketsStream, existingPlacas[i]);
+                    WriteCodigoKey(bucketsStream, existingCodigos[i]);
                     WriteLong(bucketsStream, existingOffsets[i]);
                     bucketsStream.Seek(targetBucket + 4, SeekOrigin.Begin);
                     WriteInt(bucketsStream, targetCount + 1);
                 }
-                // Reintentar la inserción del registro nuevo.
             }
         }
 
-        // ── Serialización de Vehiculo ──────────────────────────────────────────
+        // ── Serialización de Tarifa ────────────────────────────────────────────
 
-        // vehiculos.dat: placa(string) + tipo(int) + comentarios(string) + foto(int len + bytes)
-        private static void WriteVehiculoRecord(FileStream stream, Vehiculo v)
+        // tarifas.dat: codigo(str) + nombre(str) + tipo(int) + aplicaA(int,-1=todos)
+        //              + valor(double) + horaInicio(int) + horaFin(int) + descripcion(str)
+        private static void WriteTarifaRecord(FileStream stream, Tarifa t)
         {
-            WriteString(stream, v.Placa);
-            WriteInt(stream, (int)v.Tipo);
-            WriteString(stream, v.Comentarios);
-            WriteInt(stream, v.Foto.Length);
-            if (v.Foto.Length > 0)
-                stream.Write(v.Foto, 0, v.Foto.Length);
+            WriteString(stream, t.Codigo);
+            WriteString(stream, t.Nombre);
+            WriteInt(stream, (int)t.Tipo);
+            WriteInt(stream, t.AplicaA.HasValue ? (int)t.AplicaA.Value : -1);
+            WriteDouble(stream, t.Valor);
+            WriteInt(stream, t.HoraInicio);
+            WriteInt(stream, t.HoraFin);
+            WriteString(stream, t.Descripcion);
         }
 
-        private static Vehiculo ReadVehiculoRecord(FileStream stream)
+        private static Tarifa ReadTarifaRecord(FileStream stream)
         {
-            string       placa       = ReadString(stream);
-            TipoVehiculo tipo        = (TipoVehiculo)ReadInt(stream);
-            string       comentarios = ReadString(stream);
-            int          fotoLen     = ReadInt(stream);
-            byte[]       foto        = new byte[fotoLen];
-            if (fotoLen > 0) stream.Read(foto, 0, fotoLen);
-            return new Vehiculo(placa, tipo, comentarios, foto);
+            string        codigo      = ReadString(stream);
+            string        nombre      = ReadString(stream);
+            TipoTarifa    tipo        = (TipoTarifa)ReadInt(stream);
+            int           aplicaARaw  = ReadInt(stream);
+            TipoVehiculo? aplicaA     = aplicaARaw < 0 ? (TipoVehiculo?)null : (TipoVehiculo)aplicaARaw;
+            double        valor       = ReadDouble(stream);
+            int           horaInicio  = ReadInt(stream);
+            int           horaFin     = ReadInt(stream);
+            string        descripcion = ReadString(stream);
+            return new Tarifa(codigo, nombre, tipo, aplicaA, valor, horaInicio, horaFin, descripcion);
         }
 
         // ── E/S binaria (big-endian) ───────────────────────────────────────────
 
-        // Escribe la placa en exactamente PLACA_KEY_SIZE bytes (UTF-8 + padding de ceros).
-        private static void WritePlacaKey(FileStream stream, string placa)
+        private static void WriteCodigoKey(FileStream stream, string codigo)
         {
-            byte[] key      = new byte[PLACA_KEY_SIZE];
-            byte[] placaBytes = Encoding.UTF8.GetBytes(placa);
-            int    len      = Math.Min(placaBytes.Length, PLACA_KEY_SIZE);
-            Array.Copy(placaBytes, key, len);
-            stream.Write(key, 0, PLACA_KEY_SIZE);
+            byte[] key        = new byte[CODIGO_KEY_SIZE];
+            byte[] codigoBytes = Encoding.UTF8.GetBytes(codigo);
+            int    len        = Math.Min(codigoBytes.Length, CODIGO_KEY_SIZE);
+            Array.Copy(codigoBytes, key, len);
+            stream.Write(key, 0, CODIGO_KEY_SIZE);
         }
 
-        // Lee PLACA_KEY_SIZE bytes y devuelve la placa como string (sin bytes nulos de relleno).
-        private static string ReadPlacaKey(FileStream stream)
+        private static string ReadCodigoKey(FileStream stream)
         {
-            byte[] key = new byte[PLACA_KEY_SIZE];
-            stream.Read(key, 0, PLACA_KEY_SIZE);
+            byte[] key = new byte[CODIGO_KEY_SIZE];
+            stream.Read(key, 0, CODIGO_KEY_SIZE);
             int len = Array.IndexOf(key, (byte)0);
-            if (len < 0) len = PLACA_KEY_SIZE;
+            if (len < 0) len = CODIGO_KEY_SIZE;
             return Encoding.UTF8.GetString(key, 0, len);
         }
 
@@ -459,6 +437,13 @@ namespace EstructurasDeDatosIntegrador.Storage
         }
 
         private static void WriteLong(FileStream stream, long value)
+        {
+            byte[] bytes = BitConverter.GetBytes(value);
+            if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+            stream.Write(bytes, 0, 8);
+        }
+
+        private static void WriteDouble(FileStream stream, double value)
         {
             byte[] bytes = BitConverter.GetBytes(value);
             if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
@@ -481,7 +466,14 @@ namespace EstructurasDeDatosIntegrador.Storage
             return BitConverter.ToInt64(bytes, 0);
         }
 
-        // Prefijo de 2 bytes con la longitud + UTF-8 (equivalente a writeUTF/readUTF de Java).
+        private static double ReadDouble(FileStream stream)
+        {
+            byte[] bytes = new byte[8];
+            stream.Read(bytes, 0, 8);
+            if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+            return BitConverter.ToDouble(bytes, 0);
+        }
+
         private static void WriteString(FileStream stream, string value)
         {
             byte[] strBytes = Encoding.UTF8.GetBytes(value);

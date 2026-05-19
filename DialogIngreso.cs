@@ -8,10 +8,12 @@ namespace EstructurasDeDatosIntegrador
     internal class DialogIngreso : Form
     {
         private readonly ComboBox cmbTipo;
+        private readonly ComboBox cmbTarifa;
         private readonly TextBox  txtComentarios;
 
-        public TipoVehiculo TipoSeleccionado => (TipoVehiculo)cmbTipo.SelectedIndex;
-        public string       Comentarios      => txtComentarios.Text.Trim();
+        public TipoVehiculo TipoSeleccionado    => (TipoVehiculo)cmbTipo.SelectedIndex;
+        public TipoTarifa   TarifaSeleccionada  => (TipoTarifa)cmbTarifa.SelectedIndex;
+        public string       Comentarios         => txtComentarios.Text.Trim();
 
         public DialogIngreso(string placa)
         {
@@ -20,15 +22,15 @@ namespace EstructurasDeDatosIntegrador
             MaximizeBox     = false;
             MinimizeBox     = false;
             StartPosition   = FormStartPosition.CenterParent;
-            ClientSize      = new Size(340, 230);
+            ClientSize      = new Size(340, 270);
             BackColor       = Color.FromArgb(240, 242, 245);
 
             var lblTipo = new Label
             {
-                Text      = "Tipo de vehículo:",
-                Font      = new Font("Segoe UI", 10F),
-                Location  = new Point(16, 16),
-                Size      = new Size(308, 22),
+                Text     = "Tipo de vehículo:",
+                Font     = new Font("Segoe UI", 10F),
+                Location = new Point(16, 16),
+                Size     = new Size(308, 22),
             };
 
             cmbTipo = new ComboBox
@@ -42,11 +44,29 @@ namespace EstructurasDeDatosIntegrador
                 cmbTipo.Items.Add(val.ToString());
             cmbTipo.SelectedIndex = 0;
 
+            var lblTarifa = new Label
+            {
+                Text     = "Tipo de tarifa:",
+                Font     = new Font("Segoe UI", 10F),
+                Location = new Point(16, 78),
+                Size     = new Size(308, 22),
+            };
+
+            cmbTarifa = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font          = new Font("Segoe UI", 10F),
+                Location      = new Point(16, 102),
+                Size          = new Size(308, 26),
+            };
+            cmbTarifa.Items.AddRange(new object[] { "Por hora", "Por día" });
+            cmbTarifa.SelectedIndex = 0;
+
             var lblCom = new Label
             {
                 Text     = "Comentarios (opcional):",
                 Font     = new Font("Segoe UI", 10F),
-                Location = new Point(16, 80),
+                Location = new Point(16, 140),
                 Size     = new Size(308, 22),
             };
 
@@ -54,8 +74,8 @@ namespace EstructurasDeDatosIntegrador
             {
                 Multiline  = true,
                 Font       = new Font("Segoe UI", 10F),
-                Location   = new Point(16, 104),
-                Size       = new Size(308, 64),
+                Location   = new Point(16, 164),
+                Size       = new Size(308, 56),
                 ScrollBars = ScrollBars.Vertical,
             };
 
@@ -66,14 +86,15 @@ namespace EstructurasDeDatosIntegrador
                 BackColor    = Color.FromArgb(30, 47, 78),
                 ForeColor    = Color.White,
                 FlatStyle    = FlatStyle.Flat,
-                Location     = new Point(96, 180),
+                Location     = new Point(96, 228),
                 Size         = new Size(148, 36),
                 DialogResult = DialogResult.OK,
             };
             btnContinuar.FlatAppearance.BorderSize = 0;
 
             AcceptButton = btnContinuar;
-            Controls.AddRange(new Control[] { lblTipo, cmbTipo, lblCom, txtComentarios, btnContinuar });
+            Controls.AddRange(new Control[]
+                { lblTipo, cmbTipo, lblTarifa, cmbTarifa, lblCom, txtComentarios, btnContinuar });
         }
     }
 }

@@ -18,14 +18,14 @@ namespace EstructurasDeDatosIntegrador
         private ElementHost  _videoHost;
         private MediaElement _mediaElement;
 
-        private readonly HashingStorage _storage = new HashingStorage();
+        private readonly HashingStorageVehiculos _storage = new HashingStorageVehiculos();
 
         public Form1()
         {
             InitializeComponent();
             lblCapTotal.Text = CapacidadTotal.ToString();
 
-            string dataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
+            string dataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "VehicleData");
             Directory.CreateDirectory(dataDir);
             Directory.SetCurrentDirectory(dataDir);
             _storage.EnsureInitialized();
@@ -143,6 +143,11 @@ namespace EstructurasDeDatosIntegrador
             ventana.ShowDialog(this);
         }
 
+        private void btnTarifas_Click(object sender, EventArgs e)
+        {
+            new VentanaTarifas().ShowDialog(this);
+        }
+
         private void RegistrarEntrada(string placa)
         {
             // Capturar antes de abrir el diálogo para que no aparezca en la foto.
@@ -151,7 +156,8 @@ namespace EstructurasDeDatosIntegrador
             using var dialog = new DialogIngreso(placa);
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
-            var vehiculo = new Vehiculo(placa, dialog.TipoSeleccionado, dialog.Comentarios, foto);
+            var vehiculo = new Vehiculo(placa, dialog.TipoSeleccionado, dialog.TarifaSeleccionada,
+                                        DateTime.Now, dialog.Comentarios, foto);
 
             if (!_storage.AddVehiculo(vehiculo))
             {
@@ -167,13 +173,11 @@ namespace EstructurasDeDatosIntegrador
 
         private void RegistrarSalida(string placa)
         {
-            var respuesta = MessageBox.Show(
-                $"¿Confirmar salida del vehículo {placa}?",
-                "Registrar Salida",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
+            var vehiculo = _storage.GetVehiculo(placa);
+            if (vehiculo == null) return;
 
-            if (respuesta != DialogResult.Yes) return;
+            using var dialog = new DialogLiquidacion(vehiculo);
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
             _storage.DeleteVehiculo(placa);
             ActualizarOcupacion(int.Parse(_storage.GetVehiculoCount()));

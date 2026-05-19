@@ -12,6 +12,7 @@ namespace EstructurasDeDatosIntegrador
         private readonly ListView   _lista;
         private readonly Label      _lblPlacaVal;
         private readonly Label      _lblTipoVal;
+        private readonly Label      _lblTarifaVal;
         private readonly Label      _lblComentariosVal;
         private readonly PictureBox _picFoto;
 
@@ -43,8 +44,9 @@ namespace EstructurasDeDatosIntegrador
                 HideSelection = false,
                 Font          = new Font("Segoe UI", 10F),
             };
-            _lista.Columns.Add("Placa", 120);
-            _lista.Columns.Add("Tipo",  140);
+            _lista.Columns.Add("Placa",  100);
+            _lista.Columns.Add("Tipo",   110);
+            _lista.Columns.Add("Tarifa", 60);
             _lista.SelectedIndexChanged += OnSeleccionCambiada;
             grpLista.Controls.Add(_lista);
 
@@ -61,16 +63,20 @@ namespace EstructurasDeDatosIntegrador
             _lblPlacaVal = EtiquetaValor(30);
             grpDetalle.Controls.Add(_lblPlacaVal);
 
-            grpDetalle.Controls.Add(EtiquetaTitulo("Tipo:",         62));
-            _lblTipoVal = EtiquetaValor(62);
+            grpDetalle.Controls.Add(EtiquetaTitulo("Tipo:",         58));
+            _lblTipoVal = EtiquetaValor(58);
             grpDetalle.Controls.Add(_lblTipoVal);
 
-            grpDetalle.Controls.Add(EtiquetaTitulo("Comentarios:",  94));
+            grpDetalle.Controls.Add(EtiquetaTitulo("Tarifa:",       86));
+            _lblTarifaVal = EtiquetaValor(86);
+            grpDetalle.Controls.Add(_lblTarifaVal);
+
+            grpDetalle.Controls.Add(EtiquetaTitulo("Comentarios:", 114));
             _lblComentariosVal = new Label
             {
                 Font      = new Font("Segoe UI", 10F),
-                Location  = new Point(130, 94),
-                Size      = new Size(395, 44),
+                Location  = new Point(130, 114),
+                Size      = new Size(395, 40),
                 AutoSize  = false,
             };
             grpDetalle.Controls.Add(_lblComentariosVal);
@@ -79,14 +85,14 @@ namespace EstructurasDeDatosIntegrador
             {
                 Text     = "Foto de ingreso:",
                 Font     = new Font("Segoe UI", 9.5F, FontStyle.Bold),
-                Location = new Point(15, 147),
+                Location = new Point(15, 160),
                 AutoSize = true,
             });
 
             _picFoto = new PictureBox
             {
-                Location    = new Point(15, 168),
-                Size        = new Size(510, 300),
+                Location    = new Point(15, 180),
+                Size        = new Size(510, 288),
                 SizeMode    = PictureBoxSizeMode.Zoom,
                 BackColor   = Color.FromArgb(18, 18, 18),
                 BorderStyle = BorderStyle.FixedSingle,
@@ -123,6 +129,7 @@ namespace EstructurasDeDatosIntegrador
             {
                 var item = new ListViewItem(v.Placa);
                 item.SubItems.Add(v.Tipo.ToString());
+                item.SubItems.Add(v.Tarifa == Storage.TipoTarifa.PorHora ? "Hora" : "Día");
                 item.Tag = v;
                 _lista.Items.Add(item);
             }
@@ -136,6 +143,7 @@ namespace EstructurasDeDatosIntegrador
 
             _lblPlacaVal.Text       = v.Placa;
             _lblTipoVal.Text        = v.Tipo.ToString();
+            _lblTarifaVal.Text      = v.Tarifa == Storage.TipoTarifa.PorHora ? "Por hora" : "Por día";
             _lblComentariosVal.Text = string.IsNullOrEmpty(v.Comentarios) ? "—" : v.Comentarios;
 
             _picFoto.Image = (v.Foto != null && v.Foto.Length > 0)
@@ -147,6 +155,7 @@ namespace EstructurasDeDatosIntegrador
         {
             _lblPlacaVal.Text       = string.Empty;
             _lblTipoVal.Text        = string.Empty;
+            _lblTarifaVal.Text      = string.Empty;
             _lblComentariosVal.Text = string.Empty;
             _picFoto.Image          = null;
         }

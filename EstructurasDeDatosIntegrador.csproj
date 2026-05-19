@@ -63,12 +63,20 @@
     <Compile Include="DialogIngreso.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="DialogLiquidacion.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="VentanaVehiculos.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VentanaTarifas.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="Storage\HashingStorage.cs" />
+    <Compile Include="Storage\HashingStorageVehiculos.cs" />
+    <Compile Include="Storage\HashingStorageTarifas.cs" />
+    <Compile Include="Storage\Tarifa.cs" />
     <Compile Include="Storage\Vehiculo.cs" />
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>

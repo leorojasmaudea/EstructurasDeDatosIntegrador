@@ -32,6 +32,7 @@ namespace EstructurasDeDatosIntegrador
             this.lblPlacaAyuda   = new System.Windows.Forms.Label();
             this.btnRegistrar    = new System.Windows.Forms.Button();
             this.btnVerTodos     = new System.Windows.Forms.Button();
+            this.btnTarifas      = new System.Windows.Forms.Button();
             this.grpCamara       = new System.Windows.Forms.GroupBox();
             this.picCamara       = new System.Windows.Forms.PictureBox();
             this.timerReloj      = new System.Windows.Forms.Timer(this.components);
@@ -136,7 +137,7 @@ namespace EstructurasDeDatosIntegrador
             // ── grpRegistro ────────────────────────────────────────────────────
             this.grpRegistro.Font = new System.Drawing.Font("Segoe UI", 9.5F, System.Drawing.FontStyle.Bold);
             this.grpRegistro.Location = new System.Drawing.Point(10, 248);
-            this.grpRegistro.Size = new System.Drawing.Size(435, 298);
+            this.grpRegistro.Size = new System.Drawing.Size(435, 340);
             this.grpRegistro.TabIndex = 2;
             this.grpRegistro.Text = "REGISTRO DE ENTRADA";
             this.grpRegistro.Controls.Add(this.lblPlacaHeader);
@@ -144,6 +145,7 @@ namespace EstructurasDeDatosIntegrador
             this.grpRegistro.Controls.Add(this.lblPlacaAyuda);
             this.grpRegistro.Controls.Add(this.btnRegistrar);
             this.grpRegistro.Controls.Add(this.btnVerTodos);
+            this.grpRegistro.Controls.Add(this.btnTarifas);
 
             // Instrucción
             this.lblPlacaHeader.AutoSize = false;
@@ -204,6 +206,21 @@ namespace EstructurasDeDatosIntegrador
             this.btnVerTodos.UseVisualStyleBackColor = false;
             this.btnVerTodos.Click += new System.EventHandler(this.btnVerTodos_Click);
 
+            // Botón de administración de tarifas
+            this.btnTarifas.BackColor    = System.Drawing.Color.FromArgb(90, 60, 20);
+            this.btnTarifas.Cursor       = System.Windows.Forms.Cursors.Hand;
+            this.btnTarifas.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(180, 120, 40);
+            this.btnTarifas.FlatAppearance.BorderSize  = 1;
+            this.btnTarifas.FlatStyle    = System.Windows.Forms.FlatStyle.Flat;
+            this.btnTarifas.Font         = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Bold);
+            this.btnTarifas.ForeColor    = System.Drawing.Color.White;
+            this.btnTarifas.Location     = new System.Drawing.Point(68, 297);
+            this.btnTarifas.Size         = new System.Drawing.Size(295, 34);
+            this.btnTarifas.TabIndex     = 3;
+            this.btnTarifas.Text         = "ADMINISTRAR TARIFAS";
+            this.btnTarifas.UseVisualStyleBackColor = false;
+            this.btnTarifas.Click += new System.EventHandler(this.btnTarifas_Click);
+
             // ── grpCamara ──────────────────────────────────────────────────────
             this.grpCamara.Font = new System.Drawing.Font("Segoe UI", 9.5F, System.Drawing.FontStyle.Bold);
             this.grpCamara.Location = new System.Drawing.Point(455, 90);
@@ -230,7 +247,7 @@ namespace EstructurasDeDatosIntegrador
             this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.BackColor = System.Drawing.Color.FromArgb(240, 242, 245);
-            this.ClientSize = new System.Drawing.Size(1105, 558);
+            this.ClientSize = new System.Drawing.Size(1105, 600);
             this.Controls.Add(this.grpCamara);
             this.Controls.Add(this.grpRegistro);
             this.Controls.Add(this.grpCapacidad);
@@ -267,6 +284,7 @@ namespace EstructurasDeDatosIntegrador
         private System.Windows.Forms.Label      lblPlacaAyuda;
         private System.Windows.Forms.Button     btnRegistrar;
         private System.Windows.Forms.Button     btnVerTodos;
+        private System.Windows.Forms.Button     btnTarifas;
         private System.Windows.Forms.GroupBox   grpCamara;
         private System.Windows.Forms.PictureBox picCamara;
         private System.Windows.Forms.Timer      timerReloj;
