@@ -8,24 +8,27 @@ namespace EstructurasDeDatosIntegrador.Storage
     internal class HashingStorage
     {
         private const string DIRECTORY_FILE = "directory.dat";
-        private const string BUCKETS_FILE = "buckets.dat";
-        private const string DATA_FILE = "users.dat";
+        private const string BUCKETS_FILE   = "buckets.dat";
+        private const string DATA_FILE      = "vehiculos.dat";
 
         // Capacidad máxima de registros por bucket
         private const int BUCKET_CAPACITY = 2;
 
-        // Formato de cada bucket: localDepth(int,4) + count(int,4) + BUCKET_CAPACITY * (cc(long,8) + dataOffset(long,8))
-        // Tamaño total de un bucket: 8 + BUCKET_CAPACITY * 16 = 40 bytes
+        // Bytes fijos reservados para la placa en cada entrada del bucket (≤ 8 chars UTF-8)
+        private const int PLACA_KEY_SIZE = 8;
 
-        // Formato del directorio: globalDepth(int,4) + 2^globalDepth * puntero(long,8)
+        // Formato de cada bucket: localDepth(int,4) + count(int,4) + BUCKET_CAPACITY × (placa(byte[8]) + dataOffset(long,8))
+        // Tamaño total de un bucket: 8 + BUCKET_CAPACITY × 16 = 40 bytes  ← idéntico a la versión anterior
+
+        // Formato del directorio: globalDepth(int,4) + 2^globalDepth × puntero(long,8)
 
         private int globalDepth = 1;
 
         private void ResetFiles()
         {
             if (File.Exists(DIRECTORY_FILE)) File.Delete(DIRECTORY_FILE);
-            if (File.Exists(BUCKETS_FILE)) File.Delete(BUCKETS_FILE);
-            if (File.Exists(DATA_FILE)) File.Delete(DATA_FILE);
+            if (File.Exists(BUCKETS_FILE))   File.Delete(BUCKETS_FILE);
+            if (File.Exists(DATA_FILE))      File.Delete(DATA_FILE);
         }
 
         public void InitializeFiles()
@@ -33,272 +36,201 @@ namespace EstructurasDeDatosIntegrador.Storage
             ResetFiles();
             globalDepth = 1;
 
-            using var bucketsStream = new FileStream(BUCKETS_FILE, FileMode.Create, FileAccess.ReadWrite);
+            using var bucketsStream   = new FileStream(BUCKETS_FILE,   FileMode.Create, FileAccess.ReadWrite);
             using var directoryStream = new FileStream(DIRECTORY_FILE, FileMode.Create, FileAccess.ReadWrite);
-            using var dataStream = new FileStream(DATA_FILE, FileMode.Create, FileAccess.ReadWrite);
+            using var dataStream      = new FileStream(DATA_FILE,      FileMode.Create, FileAccess.ReadWrite);
 
-            // Escribimos la profundidad global en el directorio
             WriteInt(directoryStream, globalDepth);
 
-            // Creamos dos buckets vacíos con localDepth = 1
             long bucket1Offset = CreateEmptyBucket(bucketsStream, 1);
             long bucket2Offset = CreateEmptyBucket(bucketsStream, 1);
 
-            // Directorio: 2 entradas (2^1), cada una es un long que apunta al offset del bucket
             WriteLong(directoryStream, bucket1Offset); // índice 0 → bucket 0
             WriteLong(directoryStream, bucket2Offset); // índice 1 → bucket 1
 
-            // Inicializamos el archivo de datos con un contador de registros en 0
-            WriteInt(dataStream, 0);
+            WriteInt(dataStream, 0); // contador de registros = 0
         }
 
-        /// <summary>
-        /// Crea un bucket vacío al final del archivo de buckets y retorna su offset.
-        /// </summary>
         private long CreateEmptyBucket(FileStream bucketsStream, int localDepth)
         {
             long offset = bucketsStream.Length;
             bucketsStream.Seek(0, SeekOrigin.End);
-            WriteInt(bucketsStream, localDepth); // Profundidad local
-            WriteInt(bucketsStream, 0);          // Cantidad de registros = 0
+            WriteInt(bucketsStream, localDepth);
+            WriteInt(bucketsStream, 0);
             for (int i = 0; i < BUCKET_CAPACITY; i++)
             {
-                WriteLong(bucketsStream, -1L); // CC placeholder
-                WriteLong(bucketsStream, -1L); // dataOffset placeholder
+                WritePlacaKey(bucketsStream, string.Empty); // placa placeholder (8 ceros)
+                WriteLong(bucketsStream, -1L);              // dataOffset placeholder
             }
             return offset;
         }
 
-        private int GetDirectoryIndex(long cc)
+        // ── Hash y directorio ──────────────────────────────────────────────────
+
+        private int Hash(string placa)
         {
-            return Hash(cc) & ((1 << globalDepth) - 1);
+            int sum = 0;
+            foreach (char c in placa) sum += c;
+            return Math.Abs(sum % 97);
         }
 
-        private int Hash(long cc)
+        private int GetDirectoryIndex(string placa)
         {
-            return (int)(cc % 97);
+            return Hash(placa) & ((1 << globalDepth) - 1);
         }
 
         private static void DoubleDirectory(FileStream directory, int oldGlobalDepth)
         {
-            // Calculamos el tamaño del directorio antes de la duplicación, el cual es 2^oldGlobalDepth,
-            // y leemos todos los punteros actuales a los buckets para luego escribirlos dos veces en el nuevo directorio.
             int oldSize = 1 << oldGlobalDepth;
-            List<long> oldPointers = new List<long>();
-            directory.Seek(4, SeekOrigin.Begin); // Saltamos el globalDepth
-            // Creamos una lista para almacenar los punteros actuales del directorio,
-            // los cuales se encuentran después de los 4 bytes de la profundidad global.
+            var oldPointers = new List<long>();
+            directory.Seek(4, SeekOrigin.Begin);
             for (int i = 0; i < oldSize; i++)
                 oldPointers.Add(ReadLong(directory));
 
-            // Reseteamos el directorio para escribir la nueva profundidad global y luego los punteros a los buckets.
             directory.SetLength(0);
             directory.Seek(0, SeekOrigin.Begin);
-            // Escribimos la nueva profundidad global, que es el doble de la anterior,
-            // y luego escribimos los punteros a los buckets dos veces para reflejar la duplicación del directorio.
             WriteInt(directory, oldGlobalDepth + 1);
-            for (int i = 0; i < oldSize; i++)
-                WriteLong(directory, oldPointers[i]);
-            for (int i = 0; i < oldSize; i++)
-                WriteLong(directory, oldPointers[i]);
+            for (int i = 0; i < oldSize; i++) WriteLong(directory, oldPointers[i]);
+            for (int i = 0; i < oldSize; i++) WriteLong(directory, oldPointers[i]);
         }
 
-        public bool AddUser(User userData)
+        // Abre los archivos existentes o los crea desde cero si no existen.
+        public void EnsureInitialized()
         {
-            // Primero verificamos que el usuario no exista previamente para evitar duplicados.
-            if (GetUser(userData.Cc) != null)
+            if (!File.Exists(DIRECTORY_FILE) || !File.Exists(BUCKETS_FILE) || !File.Exists(DATA_FILE))
+                InitializeFiles();
+        }
+
+        // ── API pública ────────────────────────────────────────────────────────
+
+        public bool AddVehiculo(Vehiculo vehiculo)
+        {
+            if (GetVehiculo(vehiculo.Placa) != null)
                 return false;
 
-            // Primero almacenar al final del archivo de datos para obtener el offset correspondiente
-            long dataOffset = AddUserData(userData);
-            // Segundo, insertar la entrada (cc, dataOffset) en el bucket correspondiente según el directorio y la función hash.
-            // Si el bucket está lleno, se divide y se reintenta la inserción.
-            InsertEntry(userData.Cc, dataOffset);
+            long dataOffset = AddVehiculoData(vehiculo);
+            InsertEntry(vehiculo.Placa, dataOffset);
             return true;
         }
 
-        private long AddUserData(User userData)
+        public bool DeleteVehiculo(string placa)
         {
-            using var dataStream = new FileStream(DATA_FILE, FileMode.Open, FileAccess.ReadWrite);
-            // Leer el contador actual de registros y actualizarlo
-            dataStream.Seek(0, SeekOrigin.Begin);
-            int count = ReadInt(dataStream);
-            dataStream.Seek(0, SeekOrigin.Begin);
-            WriteInt(dataStream, count + 1); // contador++
-
-            // Escribir el registro al final del archivo
-            long dataOffset = dataStream.Length;
-            dataStream.Seek(0, SeekOrigin.End);
-            WriteLong(dataStream, userData.Cc);
-            WriteString(dataStream, userData.Name);
-            WriteString(dataStream, userData.Email);
-
-            return dataOffset;
-        }
-
-        /// <summary>
-        /// Inserta una entrada (cc, dataOffset) en el bucket correspondiente.
-        /// Si el bucket está lleno, lo divide y reintenta hasta lograr la inserción.
-        /// </summary>
-        private void InsertEntry(long cc, long dataOffset)
-        {
-            using var directoryStream = new FileStream(DIRECTORY_FILE, FileMode.Open, FileAccess.ReadWrite);
-            using var bucketsStream = new FileStream(BUCKETS_FILE, FileMode.Open, FileAccess.ReadWrite);
-
-            directoryStream.Seek(0, SeekOrigin.Begin);
-            globalDepth = ReadInt(directoryStream);
-
-            // Es true ya que el criterio de parada es cuando se logra insertar el nuevo registro, lo que puede requerir
-            // múltiples splits si los registros siguen cayendo en el mismo bucket.
-            while (true)
+            try
             {
-                // Obtenemos el indice, el cual está dado por los bits menos significativos del hash de la CC,
-                // limitados por la profundidad global (globalDepth).
-                int dirIndex = GetDirectoryIndex(cc);
+                using var directoryStream = new FileStream(DIRECTORY_FILE, FileMode.Open, FileAccess.ReadWrite);
+                using var bucketsStream   = new FileStream(BUCKETS_FILE,   FileMode.Open, FileAccess.ReadWrite);
+                using var dataStream      = new FileStream(DATA_FILE,      FileMode.Open, FileAccess.ReadWrite);
 
-                // Leer el puntero al bucket desde el directorio
-                // Saltamos los 4 bytes de la profundidad global la cual está almacenada en disco y luego multiplicamos
-                // el índice por 8 (tamaño de un long) para obtener la posición del puntero al bucket.
+                globalDepth = ReadInt(directoryStream);
+                int dirIndex = GetDirectoryIndex(placa);
+
                 directoryStream.Seek(4 + dirIndex * 8L, SeekOrigin.Begin);
-                // Obtenemos el offset del bucket al que corresponde el índice calculado.
                 long bucketOffset = ReadLong(directoryStream);
 
-                // Leer la cabecera del bucket
-                // Nos posicionamos en el offset del bucket para leer su cabecera, la cual contiene
-                // la profundidad local y la cantidad de registros actualmente almacenados.
                 bucketsStream.Seek(bucketOffset, SeekOrigin.Begin);
-                int localDepth = ReadInt(bucketsStream);
+                ReadInt(bucketsStream); // localDepth — no se usa aquí
                 int count = ReadInt(bucketsStream);
 
-                // CASO 1: Bucket con espacio disponible — insertar directamente
-                // Nos ubicamos en el offset del bucket, saltamos los 8 bytes de la cabecera (localDepth + count) y
-                // luego avanzamos count * 16 bytes para posicionarnos al final de las entradas actuales
-                // (cada entrada ocupa 16 bytes: 8 para cc y 8 para dataOffset).
-                if (count < BUCKET_CAPACITY)
-                {
-                    bucketsStream.Seek(bucketOffset + 8 + (long)count * 16, SeekOrigin.Begin);
-                    WriteLong(bucketsStream, cc);
-                    WriteLong(bucketsStream, dataOffset);
-                    // Actualizar el contador
-                    bucketsStream.Seek(bucketOffset + 4, SeekOrigin.Begin);
-                    WriteInt(bucketsStream, count + 1);
-                    return;
-                }
-
-                long[] existingCCs = new long[count];
-                long[] existingOffsets = new long[count];
-                // Nos posicionamos en el offset del bucket, saltamos los 8 bytes de la cabecera (localDepth + count)
-                // y luego leemos las entradas existentes (cc y dataOffset) para almacenarlas temporalmente en arrays.
-                bucketsStream.Seek(bucketOffset + 8, SeekOrigin.Begin);
+                long entryBase  = bucketOffset + 8;
+                int  foundIndex = -1;
                 for (int i = 0; i < count; i++)
                 {
-                    existingCCs[i] = ReadLong(bucketsStream);
-                    existingOffsets[i] = ReadLong(bucketsStream);
+                    bucketsStream.Seek(entryBase + i * 16, SeekOrigin.Begin);
+                    string stored = ReadPlacaKey(bucketsStream);
+                    ReadLong(bucketsStream);
+                    if (stored == placa) { foundIndex = i; break; }
                 }
+                if (foundIndex < 0) return false;
 
-                // CASO 2: Split con duplicación del directorio (localDepth == globalDepth)
-                // En este caso, el bucket está lleno y además no tenemos espacio en el directorio para crear un nuevo bucket,
-                // por lo que debemos duplicar el directorio antes de dividir el bucket.
-                if (localDepth == globalDepth)
+                // Desplazar entradas posteriores una posición hacia atrás.
+                for (int i = foundIndex; i < count - 1; i++)
                 {
-                    DoubleDirectory(directoryStream, globalDepth);
-                    // En DoubleDirectory ya se actualiza el valor de globalDepth en el archivo, pero es necesario
-                    // actualizar la variable en memoria para que el resto del código funcione correctamente.
-                    globalDepth++;
+                    bucketsStream.Seek(entryBase + (i + 1) * 16, SeekOrigin.Begin);
+                    string nextPlaca  = ReadPlacaKey(bucketsStream);
+                    long   nextOffset = ReadLong(bucketsStream);
+                    bucketsStream.Seek(entryBase + i * 16, SeekOrigin.Begin);
+                    WritePlacaKey(bucketsStream, nextPlaca);
+                    WriteLong(bucketsStream, nextOffset);
                 }
 
-                int newLocalDepth = localDepth + 1;
+                // Limpiar el último slot y decrementar el contador del bucket.
+                bucketsStream.Seek(entryBase + (count - 1) * 16, SeekOrigin.Begin);
+                WritePlacaKey(bucketsStream, string.Empty);
+                WriteLong(bucketsStream, -1L);
+                bucketsStream.Seek(bucketOffset + 4, SeekOrigin.Begin);
+                WriteInt(bucketsStream, count - 1);
 
-                // Crear el nuevo bucket con la nueva profundidad local
-                long newBucketOffset = CreateEmptyBucket(bucketsStream, newLocalDepth);
+                // Decrementar el contador global en vehiculos.dat.
+                dataStream.Seek(0, SeekOrigin.Begin);
+                int total = ReadInt(dataStream);
+                dataStream.Seek(0, SeekOrigin.Begin);
+                WriteInt(dataStream, Math.Max(0, total - 1));
 
-                // Limpiar el bucket original y actualizar su profundidad local
-                bucketsStream.Seek(bucketOffset, SeekOrigin.Begin);
-                WriteInt(bucketsStream, newLocalDepth);
-                WriteInt(bucketsStream, 0); // count = 0
-                for (int i = 0; i < BUCKET_CAPACITY; i++)
-                {
-                    WriteLong(bucketsStream, -1L);
-                    WriteLong(bucketsStream, -1L);
-                }
+                return true;
+            }
+            catch (IOException e) { Console.WriteLine(e.Message); }
+            return false;
+        }
 
-                // Actualizar los punteros del directorio
-                int dirSize = 1 << globalDepth; // Tamaño actual del directorio después de la posible duplicación
-                int oldMask = (1 << localDepth) - 1; // Máscara para obtener los bits relevantes de la profundidad local anterior
-                int pattern = dirIndex & oldMask; // bits bajos que identificaban al bucket viejo
+        // Devuelve solo los vehículos actualmente en el parqueadero
+        // recorriendo los buckets (ignora registros eliminados del hash).
+        public List<Vehiculo> GetVehiculosPresentes()
+        {
+            var lista = new List<Vehiculo>();
+            try
+            {
+                using var directoryStream = new FileStream(DIRECTORY_FILE, FileMode.Open, FileAccess.Read);
+                using var bucketsStream   = new FileStream(BUCKETS_FILE,   FileMode.Open, FileAccess.Read);
+                using var dataStream      = new FileStream(DATA_FILE,      FileMode.Open, FileAccess.Read);
+
+                globalDepth = ReadInt(directoryStream);
+                int dirSize = 1 << globalDepth;
+                var visitados = new System.Collections.Generic.HashSet<long>();
 
                 for (int i = 0; i < dirSize; i++)
                 {
-                    if ((i & oldMask) == pattern)
+                    directoryStream.Seek(4 + i * 8L, SeekOrigin.Begin);
+                    long bucketOffset = ReadLong(directoryStream);
+                    if (!visitados.Add(bucketOffset)) continue;
+
+                    bucketsStream.Seek(bucketOffset, SeekOrigin.Begin);
+                    ReadInt(bucketsStream); // localDepth
+                    int count = ReadInt(bucketsStream);
+
+                    for (int j = 0; j < count; j++)
                     {
-                        directoryStream.Seek(4 + i * 8L, SeekOrigin.Begin);
-                        // El bit en la posición localDepth decide si va al bucket viejo (0) o al nuevo (1)
-                        if (((i >> localDepth) & 1) == 1)
-                            WriteLong(directoryStream, newBucketOffset);
-                        else
-                            WriteLong(directoryStream, bucketOffset);
+                        string placa      = ReadPlacaKey(bucketsStream);
+                        long   dataOffset = ReadLong(bucketsStream);
+                        if (string.IsNullOrEmpty(placa) || dataOffset < 0) continue;
+                        dataStream.Seek(dataOffset, SeekOrigin.Begin);
+                        lista.Add(ReadVehiculoRecord(dataStream));
                     }
                 }
-
-                // Redistribuir las entradas existentes entre los dos buckets
-                for (int i = 0; i < existingCCs.Length; i++)
-                {
-                    // Recalculamos el índice del directorio para cada CC existente usando la nueva profundidad global,
-                    // lo que nos permitirá determinar a qué bucket debe ir cada entrada (viejo o nuevo).
-                    int idx = GetDirectoryIndex(existingCCs[i]);
-                    // Saltamos los 4 bytes de la profundidad global en el directorio y luego multiplicamos el índice
-                    // por 8 para obtener la posición del puntero al bucket destino.
-                    directoryStream.Seek(4 + idx * 8L, SeekOrigin.Begin);
-                    long targetBucket = ReadLong(directoryStream);
-
-                    // Nos posicionamos en el campo count del bucket destino (offset + 4 bytes de localDepth)
-                    bucketsStream.Seek(targetBucket + 4, SeekOrigin.Begin);
-                    // Leemos cuántas entradas tiene actualmente el bucket destino
-                    int targetCount = ReadInt(bucketsStream);
-                    // Nos posicionamos al final de las entradas existentes del bucket destino:
-                    // offset + 8 (cabecera: localDepth + count) + targetCount * 16 (cada entrada: 8 cc + 8 dataOffset)
-                    bucketsStream.Seek(targetBucket + 8 + (long)targetCount * 16, SeekOrigin.Begin);
-                    // Escribimos la CC y el dataOffset de la entrada redistribuida
-                    WriteLong(bucketsStream, existingCCs[i]);
-                    WriteLong(bucketsStream, existingOffsets[i]);
-                    // Volvemos al campo count del bucket destino para incrementarlo en 1
-                    bucketsStream.Seek(targetBucket + 4, SeekOrigin.Begin);
-                    WriteInt(bucketsStream, targetCount + 1);
-                }
-
-                // Volver al inicio del while para reintentar la inserción del nuevo registro
-                // (el bucket destino puede seguir lleno si todos los registros fueron al mismo lado)
             }
+            catch (IOException e) { Console.WriteLine(e.Message); }
+            return lista;
         }
 
-        public List<User> GetAllUsers()
+        public List<Vehiculo> GetAllVehiculos()
         {
-            var users = new List<User>();
+            var lista = new List<Vehiculo>();
             try
             {
                 using var dataStream = new FileStream(DATA_FILE, FileMode.Open, FileAccess.Read);
-                dataStream.Seek(4, SeekOrigin.Begin); // Saltamos los 4 bytes del contador de registros
+                dataStream.Seek(4, SeekOrigin.Begin);
                 while (dataStream.Position < dataStream.Length)
-                {
-                    long cc = ReadLong(dataStream);
-                    string name = ReadString(dataStream);
-                    string email = ReadString(dataStream);
-                    users.Add(new User(cc, name, email));
-                }
+                    lista.Add(ReadVehiculoRecord(dataStream));
             }
-            catch (IOException e)
-            {
-                Console.WriteLine(e.Message);
-            }
+            catch (IOException e) { Console.WriteLine(e.Message); }
 
-            Console.WriteLine("\n=== Todos los usuarios ===");
-            foreach (var u in users)
-                Console.WriteLine($"  CC: {u.Cc}, Nombre: {u.Name}, Email: {u.Email}");
-            Console.WriteLine($"Total: {users.Count} usuarios");
-            return users;
+            Console.WriteLine("\n=== Todos los vehículos ===");
+            foreach (var v in lista)
+                Console.WriteLine($"  Placa: {v.Placa}, Tipo: {v.Tipo}, Comentarios: {v.Comentarios}");
+            Console.WriteLine($"Total: {lista.Count} vehículos");
+            return lista;
         }
 
-        public string GetUserCount()
+        public string GetVehiculoCount()
         {
             try
             {
@@ -306,86 +238,218 @@ namespace EstructurasDeDatosIntegrador.Storage
                 dataStream.Seek(0, SeekOrigin.Begin);
                 return ReadInt(dataStream).ToString();
             }
-            catch (IOException e)
-            {
-                Console.WriteLine(e.Message);
-            }
+            catch (IOException e) { Console.WriteLine(e.Message); }
             return "0";
         }
 
-        // Búsqueda de usuario por CC usando búsqueda secuencial: se recorre el archivo de datos desde el inicio,
-        // leyendo cada registro completo (CC, nombre, email) y comparando la CC con la buscada.
-        // Si se encuentra una coincidencia, se retorna el usuario.
-        public User GetUserSeq(long cc)
+        // Búsqueda secuencial: recorre vehiculos.dat comparando placa registro a registro.
+        public Vehiculo GetVehiculoSeq(string placa)
         {
             try
             {
                 using var dataStream = new FileStream(DATA_FILE, FileMode.Open, FileAccess.Read);
-                dataStream.Seek(4, SeekOrigin.Begin); // Saltamos los 4 bytes del contador de registros
+                dataStream.Seek(4, SeekOrigin.Begin);
                 while (dataStream.Position < dataStream.Length)
                 {
-                    long readCC = ReadLong(dataStream);
-                    string name = ReadString(dataStream);
-                    string email = ReadString(dataStream);
-                    if (readCC == cc)
-                        return new User(readCC, name, email);
+                    var v = ReadVehiculoRecord(dataStream);
+                    if (v.Placa == placa) return v;
                 }
             }
-            catch (IOException e)
-            {
-                Console.WriteLine(e.Message);
-            }
-            Console.WriteLine($"Usuario con CC {cc} no encontrado.");
+            catch (IOException e) { Console.WriteLine(e.Message); }
+            Console.WriteLine($"Vehículo con placa {placa} no encontrado.");
             return null;
         }
 
-        // Búsqueda de usuario por CC usando Extendible Hashing: se calcula el índice del directorio usando la función hash
-        // y la profundidad global, luego se accede al bucket correspondiente y se busca la CC entre las entradas del bucket.
-        // Si se encuentra, se lee el registro completo del archivo de datos usando el offset almacenado en el bucket.
-        public User GetUser(long cc)
+        // Búsqueda por hashing: calcula el índice del directorio, accede al bucket
+        // y localiza la placa; luego lee el registro completo desde vehiculos.dat.
+        public Vehiculo GetVehiculo(string placa)
         {
             try
             {
                 using var directoryStream = new FileStream(DIRECTORY_FILE, FileMode.Open, FileAccess.Read);
-                using var bucketsStream = new FileStream(BUCKETS_FILE, FileMode.Open, FileAccess.Read);
-                using var dataStream = new FileStream(DATA_FILE, FileMode.Open, FileAccess.Read);
+                using var bucketsStream   = new FileStream(BUCKETS_FILE,   FileMode.Open, FileAccess.Read);
+                using var dataStream      = new FileStream(DATA_FILE,      FileMode.Open, FileAccess.Read);
 
                 globalDepth = ReadInt(directoryStream);
-                int dirIndex = GetDirectoryIndex(cc);
+                int dirIndex = GetDirectoryIndex(placa);
 
-                // Leer el puntero al bucket desde el directorio
                 directoryStream.Seek(4 + dirIndex * 8L, SeekOrigin.Begin);
                 long bucketOffset = ReadLong(directoryStream);
 
-                // Leer la cabecera del bucket
                 bucketsStream.Seek(bucketOffset, SeekOrigin.Begin);
-                int localDepth = ReadInt(bucketsStream); // Solo para mover el puntero del archivo, no se usa en la búsqueda
-                int count = ReadInt(bucketsStream);
+                int localDepth = ReadInt(bucketsStream); // avanza el puntero, no se usa aquí
+                int count      = ReadInt(bucketsStream);
 
-                // Buscar la CC en las entradas del bucket
                 for (int i = 0; i < count; i++)
                 {
-                    long storedCC = ReadLong(bucketsStream);
-                    long dataOffset = ReadLong(bucketsStream);
-                    if (storedCC == cc)
+                    string storedPlaca = ReadPlacaKey(bucketsStream);
+                    long   dataOffset  = ReadLong(bucketsStream);
+                    if (storedPlaca == placa)
                     {
-                        // Encontrado: leer el registro completo del archivo de datos
                         dataStream.Seek(dataOffset, SeekOrigin.Begin);
-                        long readCC = ReadLong(dataStream);
-                        string name = ReadString(dataStream);
-                        string email = ReadString(dataStream);
-                        return new User(readCC, name, email);
+                        return ReadVehiculoRecord(dataStream);
                     }
                 }
             }
-            catch (IOException e)
-            {
-                Console.WriteLine(e.Message);
-            }
+            catch (IOException e) { Console.WriteLine(e.Message); }
             return null;
         }
 
-        // Métodos auxiliares para E/S binaria (big-endian, equivalente a RandomAccessFile de Java)
+        // ── Operaciones internas ───────────────────────────────────────────────
+
+        private long AddVehiculoData(Vehiculo vehiculo)
+        {
+            using var dataStream = new FileStream(DATA_FILE, FileMode.Open, FileAccess.ReadWrite);
+            dataStream.Seek(0, SeekOrigin.Begin);
+            int count = ReadInt(dataStream);
+            dataStream.Seek(0, SeekOrigin.Begin);
+            WriteInt(dataStream, count + 1);
+
+            long dataOffset = dataStream.Length;
+            dataStream.Seek(0, SeekOrigin.End);
+            WriteVehiculoRecord(dataStream, vehiculo);
+            return dataOffset;
+        }
+
+        private void InsertEntry(string placa, long dataOffset)
+        {
+            using var directoryStream = new FileStream(DIRECTORY_FILE, FileMode.Open, FileAccess.ReadWrite);
+            using var bucketsStream   = new FileStream(BUCKETS_FILE,   FileMode.Open, FileAccess.ReadWrite);
+
+            directoryStream.Seek(0, SeekOrigin.Begin);
+            globalDepth = ReadInt(directoryStream);
+
+            while (true)
+            {
+                int  dirIndex    = GetDirectoryIndex(placa);
+                directoryStream.Seek(4 + dirIndex * 8L, SeekOrigin.Begin);
+                long bucketOffset = ReadLong(directoryStream);
+
+                bucketsStream.Seek(bucketOffset, SeekOrigin.Begin);
+                int localDepth = ReadInt(bucketsStream);
+                int count      = ReadInt(bucketsStream);
+
+                // CASO 1: hay espacio en el bucket → insertar directamente.
+                // Cada entrada ocupa 16 bytes: 8 (placa fija) + 8 (dataOffset).
+                if (count < BUCKET_CAPACITY)
+                {
+                    bucketsStream.Seek(bucketOffset + 8 + (long)count * 16, SeekOrigin.Begin);
+                    WritePlacaKey(bucketsStream, placa);
+                    WriteLong(bucketsStream, dataOffset);
+                    bucketsStream.Seek(bucketOffset + 4, SeekOrigin.Begin);
+                    WriteInt(bucketsStream, count + 1);
+                    return;
+                }
+
+                // Leer entradas existentes del bucket lleno.
+                var existingPlacas   = new string[count];
+                var existingOffsets  = new long[count];
+                bucketsStream.Seek(bucketOffset + 8, SeekOrigin.Begin);
+                for (int i = 0; i < count; i++)
+                {
+                    existingPlacas[i]  = ReadPlacaKey(bucketsStream);
+                    existingOffsets[i] = ReadLong(bucketsStream);
+                }
+
+                // CASO 2: localDepth == globalDepth → duplicar directorio antes del split.
+                if (localDepth == globalDepth)
+                {
+                    DoubleDirectory(directoryStream, globalDepth);
+                    globalDepth++;
+                }
+
+                int  newLocalDepth   = localDepth + 1;
+                long newBucketOffset = CreateEmptyBucket(bucketsStream, newLocalDepth);
+
+                // Limpiar bucket original.
+                bucketsStream.Seek(bucketOffset, SeekOrigin.Begin);
+                WriteInt(bucketsStream, newLocalDepth);
+                WriteInt(bucketsStream, 0);
+                for (int i = 0; i < BUCKET_CAPACITY; i++)
+                {
+                    WritePlacaKey(bucketsStream, string.Empty);
+                    WriteLong(bucketsStream, -1L);
+                }
+
+                // Reasignar punteros del directorio.
+                int dirSize  = 1 << globalDepth;
+                int oldMask  = (1 << localDepth) - 1;
+                int pattern  = dirIndex & oldMask;
+
+                for (int i = 0; i < dirSize; i++)
+                {
+                    if ((i & oldMask) == pattern)
+                    {
+                        directoryStream.Seek(4 + i * 8L, SeekOrigin.Begin);
+                        WriteLong(directoryStream,
+                            ((i >> localDepth) & 1) == 1 ? newBucketOffset : bucketOffset);
+                    }
+                }
+
+                // Redistribuir entradas entre bucket viejo y nuevo.
+                for (int i = 0; i < existingPlacas.Length; i++)
+                {
+                    int  idx          = GetDirectoryIndex(existingPlacas[i]);
+                    directoryStream.Seek(4 + idx * 8L, SeekOrigin.Begin);
+                    long targetBucket = ReadLong(directoryStream);
+
+                    bucketsStream.Seek(targetBucket + 4, SeekOrigin.Begin);
+                    int targetCount = ReadInt(bucketsStream);
+                    bucketsStream.Seek(targetBucket + 8 + (long)targetCount * 16, SeekOrigin.Begin);
+                    WritePlacaKey(bucketsStream, existingPlacas[i]);
+                    WriteLong(bucketsStream, existingOffsets[i]);
+                    bucketsStream.Seek(targetBucket + 4, SeekOrigin.Begin);
+                    WriteInt(bucketsStream, targetCount + 1);
+                }
+                // Reintentar la inserción del registro nuevo.
+            }
+        }
+
+        // ── Serialización de Vehiculo ──────────────────────────────────────────
+
+        // vehiculos.dat: placa(string) + tipo(int) + comentarios(string) + foto(int len + bytes)
+        private static void WriteVehiculoRecord(FileStream stream, Vehiculo v)
+        {
+            WriteString(stream, v.Placa);
+            WriteInt(stream, (int)v.Tipo);
+            WriteString(stream, v.Comentarios);
+            WriteInt(stream, v.Foto.Length);
+            if (v.Foto.Length > 0)
+                stream.Write(v.Foto, 0, v.Foto.Length);
+        }
+
+        private static Vehiculo ReadVehiculoRecord(FileStream stream)
+        {
+            string       placa       = ReadString(stream);
+            TipoVehiculo tipo        = (TipoVehiculo)ReadInt(stream);
+            string       comentarios = ReadString(stream);
+            int          fotoLen     = ReadInt(stream);
+            byte[]       foto        = new byte[fotoLen];
+            if (fotoLen > 0) stream.Read(foto, 0, fotoLen);
+            return new Vehiculo(placa, tipo, comentarios, foto);
+        }
+
+        // ── E/S binaria (big-endian) ───────────────────────────────────────────
+
+        // Escribe la placa en exactamente PLACA_KEY_SIZE bytes (UTF-8 + padding de ceros).
+        private static void WritePlacaKey(FileStream stream, string placa)
+        {
+            byte[] key      = new byte[PLACA_KEY_SIZE];
+            byte[] placaBytes = Encoding.UTF8.GetBytes(placa);
+            int    len      = Math.Min(placaBytes.Length, PLACA_KEY_SIZE);
+            Array.Copy(placaBytes, key, len);
+            stream.Write(key, 0, PLACA_KEY_SIZE);
+        }
+
+        // Lee PLACA_KEY_SIZE bytes y devuelve la placa como string (sin bytes nulos de relleno).
+        private static string ReadPlacaKey(FileStream stream)
+        {
+            byte[] key = new byte[PLACA_KEY_SIZE];
+            stream.Read(key, 0, PLACA_KEY_SIZE);
+            int len = Array.IndexOf(key, (byte)0);
+            if (len < 0) len = PLACA_KEY_SIZE;
+            return Encoding.UTF8.GetString(key, 0, len);
+        }
 
         private static void WriteInt(FileStream stream, int value)
         {
@@ -417,7 +481,7 @@ namespace EstructurasDeDatosIntegrador.Storage
             return BitConverter.ToInt64(bytes, 0);
         }
 
-        // Equivalente a writeUTF/readUTF de Java: prefijo de 2 bytes con la longitud en bytes + UTF-8
+        // Prefijo de 2 bytes con la longitud + UTF-8 (equivalente a writeUTF/readUTF de Java).
         private static void WriteString(FileStream stream, string value)
         {
             byte[] strBytes = Encoding.UTF8.GetBytes(value);
@@ -432,7 +496,7 @@ namespace EstructurasDeDatosIntegrador.Storage
             byte[] lenBytes = new byte[2];
             stream.Read(lenBytes, 0, 2);
             if (BitConverter.IsLittleEndian) Array.Reverse(lenBytes);
-            ushort length = BitConverter.ToUInt16(lenBytes, 0);
+            ushort length   = BitConverter.ToUInt16(lenBytes, 0);
             byte[] strBytes = new byte[length];
             stream.Read(strBytes, 0, length);
             return Encoding.UTF8.GetString(strBytes);

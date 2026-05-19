@@ -6,6 +6,8 @@ using System.Windows.Forms;
 using System.Windows.Forms.Integration;
 using System.Windows.Media;
 using Color = System.Drawing.Color;
+using EstructurasDeDatosIntegrador.Storage;
+using Control = System.Windows.Forms.Control;
 
 namespace EstructurasDeDatosIntegrador
 {
@@ -16,11 +18,19 @@ namespace EstructurasDeDatosIntegrador
         private ElementHost  _videoHost;
         private MediaElement _mediaElement;
 
+        private readonly HashingStorage _storage = new HashingStorage();
+
         public Form1()
         {
             InitializeComponent();
             lblCapTotal.Text = CapacidadTotal.ToString();
-            ActualizarOcupacion(0);
+
+            string dataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
+            Directory.CreateDirectory(dataDir);
+            Directory.SetCurrentDirectory(dataDir);
+            _storage.EnsureInitialized();
+
+            ActualizarOcupacion(int.Parse(_storage.GetVehiculoCount()));
             lblHora.Text = DateTime.Now.ToString("HH:mm:ss");
             InicializarVideo();
         }
@@ -36,11 +46,11 @@ namespace EstructurasDeDatosIntegrador
 
             _mediaElement = new MediaElement
             {
-                Source             = new Uri(videoPath, UriKind.Absolute),
-                LoadedBehavior     = MediaState.Manual,
-                UnloadedBehavior   = MediaState.Stop,
-                Stretch            = Stretch.Uniform,
-                Volume             = 0
+                Source           = new Uri(videoPath, UriKind.Absolute),
+                LoadedBehavior   = MediaState.Manual,
+                UnloadedBehavior = MediaState.Stop,
+                Stretch          = Stretch.Uniform,
+                Volume           = 0,
             };
 
             // Al terminar el video, reinicia desde el principio → loop manual.
@@ -54,12 +64,11 @@ namespace EstructurasDeDatosIntegrador
             {
                 Location = picCamara.Location,
                 Size     = picCamara.Size,
-                Child    = _mediaElement
+                Child    = _mediaElement,
             };
 
             grpCamara.Controls.Add(_videoHost);
             _videoHost.BringToFront();
-
             _mediaElement.Play();
         }
 
@@ -83,6 +92,16 @@ namespace EstructurasDeDatosIntegrador
                 e.Handled = true;
         }
 
+        // Busca la placa en tiempo real con cada tecla presionada.
+        private void txtPlaca_TextChanged(object sender, EventArgs e)
+        {
+            string placa    = txtPlaca.Text.Trim();
+            bool   presente = !string.IsNullOrEmpty(placa) && _storage.GetVehiculo(placa) != null;
+
+            btnRegistrar.Text      = presente ? "REGISTRAR SALIDA"           : "REGISTRAR ENTRADA";
+            btnRegistrar.BackColor = presente ? Color.FromArgb(160, 30, 30)  : Color.FromArgb(30, 47, 78);
+        }
+
         // Dibuja "Sin señal" cuando no hay video ni imagen en picCamara.
         private void picCamara_Paint(object sender, PaintEventArgs e)
         {
@@ -98,7 +117,6 @@ namespace EstructurasDeDatosIntegrador
                 (picCamara.Height - tam.Height) / 2f);
         }
 
-        // Lógica de registro — se completará en pasos siguientes.
         private void btnRegistrar_Click(object sender, EventArgs e)
         {
             string placa = txtPlaca.Text.Trim();
@@ -110,11 +128,77 @@ namespace EstructurasDeDatosIntegrador
                 return;
             }
 
-            // TODO: registrar entrada en el sistema de almacenamiento.
-            MessageBox.Show($"Entrada registrada: {placa}", "Registro exitoso",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (btnRegistrar.Text == "REGISTRAR SALIDA")
+            {
+                RegistrarSalida(placa);
+                return;
+            }
+
+            RegistrarEntrada(placa);
+        }
+
+        private void btnVerTodos_Click(object sender, EventArgs e)
+        {
+            var ventana = new VentanaVehiculos(_storage.GetVehiculosPresentes());
+            ventana.ShowDialog(this);
+        }
+
+        private void RegistrarEntrada(string placa)
+        {
+            // Capturar antes de abrir el diálogo para que no aparezca en la foto.
+            byte[] foto = CapturarFotoVideo();
+
+            using var dialog = new DialogIngreso(placa);
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+            var vehiculo = new Vehiculo(placa, dialog.TipoSeleccionado, dialog.Comentarios, foto);
+
+            if (!_storage.AddVehiculo(vehiculo))
+            {
+                MessageBox.Show($"La placa {placa} ya está registrada.", "Duplicado",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            ActualizarOcupacion(int.Parse(_storage.GetVehiculoCount()));
             txtPlaca.Clear();
             txtPlaca.Focus();
+        }
+
+        private void RegistrarSalida(string placa)
+        {
+            var respuesta = MessageBox.Show(
+                $"¿Confirmar salida del vehículo {placa}?",
+                "Registrar Salida",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            if (respuesta != DialogResult.Yes) return;
+
+            _storage.DeleteVehiculo(placa);
+            ActualizarOcupacion(int.Parse(_storage.GetVehiculoCount()));
+            txtPlaca.Clear();
+            txtPlaca.Focus();
+        }
+
+        // Captura la imagen de la zona de cámara usando las coordenadas de pantalla.
+        private byte[] CapturarFotoVideo()
+        {
+            Control camCtrl = _videoHost as Control ?? picCamara;
+            try
+            {
+                var screenPt = picCamara.PointToScreen(System.Drawing.Point.Empty);
+                using var bmp = new Bitmap(camCtrl.Width, camCtrl.Height);
+                using var g   = Graphics.FromImage(bmp);
+                g.CopyFromScreen(screenPt, System.Drawing.Point.Empty, camCtrl.Size);
+                using var ms = new MemoryStream();
+                bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Jpeg);
+                return ms.ToArray();
+            }
+            catch
+            {
+                return System.Array.Empty<byte>();
+            }
         }
     }
 }

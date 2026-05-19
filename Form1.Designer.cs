@@ -31,6 +31,7 @@ namespace EstructurasDeDatosIntegrador
             this.txtPlaca        = new System.Windows.Forms.TextBox();
             this.lblPlacaAyuda   = new System.Windows.Forms.Label();
             this.btnRegistrar    = new System.Windows.Forms.Button();
+            this.btnVerTodos     = new System.Windows.Forms.Button();
             this.grpCamara       = new System.Windows.Forms.GroupBox();
             this.picCamara       = new System.Windows.Forms.PictureBox();
             this.timerReloj      = new System.Windows.Forms.Timer(this.components);
@@ -142,6 +143,7 @@ namespace EstructurasDeDatosIntegrador
             this.grpRegistro.Controls.Add(this.txtPlaca);
             this.grpRegistro.Controls.Add(this.lblPlacaAyuda);
             this.grpRegistro.Controls.Add(this.btnRegistrar);
+            this.grpRegistro.Controls.Add(this.btnVerTodos);
 
             // Instrucción
             this.lblPlacaHeader.AutoSize = false;
@@ -161,7 +163,8 @@ namespace EstructurasDeDatosIntegrador
             this.txtPlaca.Size = new System.Drawing.Size(396, 72);
             this.txtPlaca.TabIndex = 0;
             this.txtPlaca.TextAlign = System.Windows.Forms.HorizontalAlignment.Center;
-            this.txtPlaca.KeyPress += new System.Windows.Forms.KeyPressEventHandler(this.txtPlaca_KeyPress);
+            this.txtPlaca.KeyPress     += new System.Windows.Forms.KeyPressEventHandler(this.txtPlaca_KeyPress);
+            this.txtPlaca.TextChanged  += new System.EventHandler(this.txtPlaca_TextChanged);
 
             // Texto de ayuda bajo el campo
             this.lblPlacaAyuda.AutoSize = false;
@@ -185,6 +188,21 @@ namespace EstructurasDeDatosIntegrador
             this.btnRegistrar.Text = "REGISTRAR ENTRADA";
             this.btnRegistrar.UseVisualStyleBackColor = false;
             this.btnRegistrar.Click += new System.EventHandler(this.btnRegistrar_Click);
+
+            // Botón secundario — ver todos los vehículos
+            this.btnVerTodos.BackColor    = System.Drawing.Color.White;
+            this.btnVerTodos.Cursor       = System.Windows.Forms.Cursors.Hand;
+            this.btnVerTodos.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(30, 47, 78);
+            this.btnVerTodos.FlatAppearance.BorderSize  = 1;
+            this.btnVerTodos.FlatStyle    = System.Windows.Forms.FlatStyle.Flat;
+            this.btnVerTodos.Font         = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Bold);
+            this.btnVerTodos.ForeColor    = System.Drawing.Color.FromArgb(30, 47, 78);
+            this.btnVerTodos.Location     = new System.Drawing.Point(68, 253);
+            this.btnVerTodos.Size         = new System.Drawing.Size(295, 36);
+            this.btnVerTodos.TabIndex     = 2;
+            this.btnVerTodos.Text         = "VER TODOS LOS VEHÍCULOS";
+            this.btnVerTodos.UseVisualStyleBackColor = false;
+            this.btnVerTodos.Click += new System.EventHandler(this.btnVerTodos_Click);
 
             // ── grpCamara ──────────────────────────────────────────────────────
             this.grpCamara.Font = new System.Drawing.Font("Segoe UI", 9.5F, System.Drawing.FontStyle.Bold);
@@ -248,6 +266,7 @@ namespace EstructurasDeDatosIntegrador
         private System.Windows.Forms.TextBox    txtPlaca;
         private System.Windows.Forms.Label      lblPlacaAyuda;
         private System.Windows.Forms.Button     btnRegistrar;
+        private System.Windows.Forms.Button     btnVerTodos;
         private System.Windows.Forms.GroupBox   grpCamara;
         private System.Windows.Forms.PictureBox picCamara;
         private System.Windows.Forms.Timer      timerReloj;
