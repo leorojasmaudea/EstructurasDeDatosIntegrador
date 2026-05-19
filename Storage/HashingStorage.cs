@@ -316,7 +316,7 @@ namespace EstructurasDeDatosIntegrador.Storage
         // Búsqueda de usuario por CC usando búsqueda secuencial: se recorre el archivo de datos desde el inicio,
         // leyendo cada registro completo (CC, nombre, email) y comparando la CC con la buscada.
         // Si se encuentra una coincidencia, se retorna el usuario.
-        public User? GetUserSeq(long cc)
+        public User GetUserSeq(long cc)
         {
             try
             {
@@ -342,7 +342,7 @@ namespace EstructurasDeDatosIntegrador.Storage
         // Búsqueda de usuario por CC usando Extendible Hashing: se calcula el índice del directorio usando la función hash
         // y la profundidad global, luego se accede al bucket correspondiente y se busca la CC entre las entradas del bucket.
         // Si se encuentra, se lee el registro completo del archivo de datos usando el offset almacenado en el bucket.
-        public User? GetUser(long cc)
+        public User GetUser(long cc)
         {
             try
             {
